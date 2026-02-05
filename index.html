@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-  <title>Rozklad na prvočísla</title>
+  <title>Factor Tree – krokové rozklikávání</title>
   <style>
     :root{
       --bg:#0b1220;
@@ -160,7 +160,7 @@
     /* Mobile default */
     svg{ width:100%; height: min(72vh, 860px); display:block; touch-action: manipulation; }
 
-    /* PC mode: a bit more vertical space helps avoid shrinking too much */
+    /* PC mode: more vertical space */
     body.pc svg{ height: min(82vh, 1040px); }
   </style>
 </head>
@@ -238,7 +238,7 @@
   // Minimum readability: 11pt ≈ 14.67px
   const MIN_READABLE_PX = 15;
 
-  // ---------- Header PC overlay elements ----------
+  // ---------- Header PC overlay ----------
   const pcResultOverlay = document.getElementById("pcResultOverlay");
   const pcResultText = document.getElementById("pcResultText");
   function showPcOverlay(html, fontPx){
@@ -285,8 +285,6 @@
   }
 
   // ---------- Layout ----------
-  // - Root starts relatively high.
-  // - In PC mode enforce minimum horizontal spacing so circles don't overlap even after scaling down.
   function computeLayout(root, W, rHalo){
     const leafList = visibleLeaves(root);
     const leafIndex = new Map();
@@ -294,19 +292,19 @@
 
     const margin = scaleVal(20);
 
-    // Shorter vertical spacing between levels (shorter "branches")
-    const yGap = scaleVal(105); // was 120
+    // shorter vertical spacing
+    const yGap = scaleVal(105);
 
-    // Root position baseline (high-ish). We'll allow auto-fit translate/scale to move it up further if tree grows.
-    const rootY = scaleVal(70); // "hned na začátku nahoru" (still leaves some breathing room)
+    // root near top (so it can "go up" naturally as the tree grows)
+    const rootY = scaleVal(70);
 
-    // enforce minimum horizontal gap (halo-to-halo + extra)
+    // enforce minimum horizontal gap in PC so circles never overlap
     const minGap = pcMode ? (2 * rHalo + scaleVal(24)) : 0;
 
     const usableBase = W - margin*2;
     const xGapBase = leafList.length <= 1 ? 0 : usableBase / (leafList.length - 1);
 
-    // Make leaves a bit farther apart (even on mobile slightly), and in PC ensure no overlap.
+    // slightly wider even on mobile; on PC also enforce minGap
     const xGap = pcMode ? Math.max(xGapBase * 1.10, minGap) : (xGapBase * 1.06);
 
     const pos = new Map();
@@ -422,7 +420,7 @@
     return parts.join("");
   }
 
-  // Mobile: inside SVG under the tree
+  // Mobile: inside SVG under tree
   function drawFactorizationBoxMobile(root, target, pos, gContent){
     let maxY = 0;
     walkVisible(root, (n) => {
@@ -510,18 +508,14 @@
     const availW = W - pad*2;
     const availH = H - pad*2;
 
-    // Scale needed to fit
     let sFit = Math.min(1, availW / extW, availH / extH);
 
-    // Enforce minimum readable font size (>= ~11pt)
     const minScaleForText = MIN_READABLE_PX / Math.max(1, baseTextPx);
     const s = Math.max(sFit, minScaleForText);
 
-    // If we had to increase scale above fit (because readability), we’ll still keep top aligned,
-    // and accept that in rare extreme cases it may not fit entirely (but text remains readable).
     const tx = pad + (availW - extW * s) / 2 - minX * s;
 
-    // Keep top anchored to pad; when tree grows, bottom pushes -> it will look like root "moves up" naturally.
+    // top anchored: root naturally goes "up" as tree grows
     const ty = pad - minY * s;
 
     gContent.setAttribute("transform", `translate(${tx.toFixed(3)},${ty.toFixed(3)}) scale(${s.toFixed(4)})`);
@@ -537,11 +531,12 @@
     const vb = svg.viewBox.baseVal;
     const W = vb.width || 360;
 
-    // sizes
     const rNode = scaleVal(28);
     const rHalo = scaleVal(34);
     const edgeW = scaleVal(3);
-    const textSize = scaleVal(18);     // base text px before any auto-fit scale
+
+    // Base size before auto-fit scaling
+    const textSize = scaleVal(18);
     const baseTextPx = textSize;
 
     const foW = scaleVal(48);
@@ -549,10 +544,8 @@
     const inpFont = scaleVal(14);
     const inpRadius = scaleVal(12);
 
-    // Layout with increased horizontal spacing + higher root
     const pos = computeLayout(root, W, rHalo);
 
-    // group for scaling/auto-fit (PC), or plain (mobile)
     const gContent = el("g", { id: "content" });
     svg.appendChild(gContent);
 
@@ -562,8 +555,8 @@
       const l = pos.get(node.left.id);
       const r = pos.get(node.right.id);
 
-      // slightly shorter "branch" ends (less into the circles)
-      const endGap = scaleVal(6);
+      // shorter ends so "větve" působí kratší
+      const endGap = scaleVal(7);
 
       const mk = (a,b) => el("line", {
         x1:a.x, y1:a.y + (rNode - endGap),
@@ -691,9 +684,6 @@
     drawEdges(root);
     drawNodes(root);
 
-    // Result placement:
-    // - PC: overlay in header
-    // - Mobile: under tree in SVG
     if(isDone(root)){
       if(pcMode){
         const html = buildPcOverlayHtml(root, target);
@@ -707,10 +697,8 @@
       hidePcOverlay();
     }
 
-    // Auto-fit in PC mode, but never shrink below ~11pt readability
     applyAutoFitIfNeeded(root, pos, rHalo, gContent, baseTextPx);
 
-    // Restore focus after redraw
     if(focusNodeId !== null){
       const inp = svg.querySelector(`input[data-node-id="${focusNodeId}"]`);
       if(inp){
@@ -768,9 +756,33 @@
     drawTree(root);
   });
 
+  // ---------- FIX: resize handler that won't kill mobile keyboard ----------
+  let resizeTimer = null;
   window.addEventListener("resize", () => {
-    drawTree(root);
-  });
+    // If user is typing into a node input, DO NOT redraw (mobile keyboard would close)
+    const ae = document.activeElement;
+    const typingInNodeInput =
+      ae && ae.tagName === "INPUT" && ae.dataset && "nodeId" in ae.dataset;
+
+    if(typingInNodeInput) return;
+
+    // PC mode benefits from redraw (auto-fit); mobile usually doesn't need it.
+    if(!pcMode){
+      // On mobile: only redraw after a small debounce (e.g., rotation), not on keyboard show/hide.
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const ae2 = document.activeElement;
+        const stillTyping =
+          ae2 && ae2.tagName === "INPUT" && ae2.dataset && "nodeId" in ae2.dataset;
+        if(!stillTyping) drawTree(root);
+      }, 250);
+      return;
+    }
+
+    // PC: redraw (debounced) for projector/window resize
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => drawTree(root), 80);
+  }, { passive:true });
 
   // ---------- Init ----------
   updateTargetUI();
