@@ -130,7 +130,7 @@
       display:flex;
       align-items:center;
       justify-content:center;
-      width: min(900px, calc(100% - 16px));
+      width: min(980px, calc(100% - 16px));
       margin: 0 auto;
       padding: 0 14px;
       border-radius: 18px;
@@ -156,7 +156,12 @@
       padding:10px;
       overflow:hidden;
     }
+
+    /* Mobile default */
     svg{ width:100%; height: min(72vh, 860px); display:block; touch-action: manipulation; }
+
+    /* PC mode: a bit more vertical space helps avoid shrinking too much */
+    body.pc svg{ height: min(82vh, 1040px); }
   </style>
 </head>
 <body>
@@ -222,7 +227,16 @@
   const pcToggle = document.getElementById("pcToggle");
   let pcMode = localStorage.getItem(SCALE_KEY) === "1";
   pcToggle.checked = pcMode;
+
+  function setBodyClass(){
+    document.body.classList.toggle("pc", pcMode);
+  }
+  setBodyClass();
+
   function scaleVal(v){ return pcMode ? v * PC_SCALE : v; }
+
+  // Minimum readability: 11pt ≈ 14.67px
+  const MIN_READABLE_PX = 15;
 
   // ---------- Header PC overlay elements ----------
   const pcResultOverlay = document.getElementById("pcResultOverlay");
@@ -271,29 +285,43 @@
   }
 
   // ---------- Layout ----------
-  function computeLayout(root, W){
+  // - Root starts relatively high.
+  // - In PC mode enforce minimum horizontal spacing so circles don't overlap even after scaling down.
+  function computeLayout(root, W, rHalo){
     const leafList = visibleLeaves(root);
     const leafIndex = new Map();
     leafList.forEach((n, i) => leafIndex.set(n.id, i));
 
     const margin = scaleVal(20);
-    const usable = W - margin*2;
-    const xGap = leafList.length <= 1 ? 0 : usable / (leafList.length - 1);
-    const yGap = scaleVal(120);
+
+    // Shorter vertical spacing between levels (shorter "branches")
+    const yGap = scaleVal(105); // was 120
+
+    // Root position baseline (high-ish). We'll allow auto-fit translate/scale to move it up further if tree grows.
+    const rootY = scaleVal(70); // "hned na začátku nahoru" (still leaves some breathing room)
+
+    // enforce minimum horizontal gap (halo-to-halo + extra)
+    const minGap = pcMode ? (2 * rHalo + scaleVal(24)) : 0;
+
+    const usableBase = W - margin*2;
+    const xGapBase = leafList.length <= 1 ? 0 : usableBase / (leafList.length - 1);
+
+    // Make leaves a bit farther apart (even on mobile slightly), and in PC ensure no overlap.
+    const xGap = pcMode ? Math.max(xGapBase * 1.10, minGap) : (xGapBase * 1.06);
 
     const pos = new Map();
     function assign(node, d){
       if(isVisibleLeaf(node)){
         const i = leafIndex.get(node.id) ?? 0;
         const x = margin + i * xGap;
-        const y = scaleVal(60) + d * yGap;
+        const y = rootY + d * yGap;
         pos.set(node.id, { x, y, d });
         return pos.get(node.id);
       } else {
         const L = assign(node.left, d+1);
         const R = assign(node.right, d+1);
         const x = (L.x + R.x) / 2;
-        const y = scaleVal(60) + d * yGap;
+        const y = rootY + d * yGap;
         pos.set(node.id, { x, y, d });
         return pos.get(node.id);
       }
@@ -395,7 +423,7 @@
   }
 
   // Mobile: inside SVG under the tree
-  function drawFactorizationBoxMobile(root, target, pos){
+  function drawFactorizationBoxMobile(root, target, pos, gContent){
     let maxY = 0;
     walkVisible(root, (n) => {
       const p = pos.get(n.id);
@@ -406,18 +434,18 @@
     const W = vb.width || 360;
     const H = vb.height || 720;
 
-    const boxW = Math.min(scaleVal(320), W - scaleVal(20));
-    const boxH = scaleVal(52);
-    const gap  = scaleVal(56);
+    const boxW = Math.min(320, W - 20);
+    const boxH = 52;
+    const gap  = 56;
 
     let y = maxY + gap;
-    y = Math.min(y, H - boxH - scaleVal(12));
+    y = Math.min(y, H - boxH - 12);
     const x = (W - boxW) / 2;
 
     const primes = getPrimesSorted(root);
 
     gContent.appendChild(el("rect", {
-      x, y, width: boxW, height: boxH, rx: scaleVal(14), ry: scaleVal(14),
+      x, y, width: boxW, height: boxH, rx: 14, ry: 14,
       fill: "rgba(11,18,32,0.55)",
       stroke: "rgba(255,255,255,0.12)",
       "stroke-width": 1
@@ -426,7 +454,7 @@
     const text = el("text", {
       x: W/2, y: y + boxH*0.66,
       "text-anchor":"middle",
-      "font-size": String(scaleVal(16)),
+      "font-size": "16",
       "font-weight":"950",
       fill:"rgba(233,238,252,0.95)"
     });
@@ -452,9 +480,8 @@
     gContent.appendChild(text);
   }
 
-  // ---------- PC auto-fit (scale down if needed) ----------
-  function applyAutoFitIfNeeded(root, pos, outerRadius){
-    // Only for PC mode. Mobile keeps 1:1.
+  // ---------- PC auto-fit with minimum readable size ----------
+  function applyAutoFitIfNeeded(root, pos, rHalo, gContent, baseTextPx){
     if(!pcMode){
       gContent.setAttribute("transform", "");
       return;
@@ -470,12 +497,11 @@
     walkVisible(root, (n) => {
       const p = pos.get(n.id);
       if(!p) return;
-      minX = Math.min(minX, p.x - outerRadius);
-      maxX = Math.max(maxX, p.x + outerRadius);
-      minY = Math.min(minY, p.y - outerRadius);
-      maxY = Math.max(maxY, p.y + outerRadius);
+      minX = Math.min(minX, p.x - rHalo);
+      maxX = Math.max(maxX, p.x + rHalo);
+      minY = Math.min(minY, p.y - rHalo);
+      maxY = Math.max(maxY, p.y + rHalo);
     });
-
     if(!Number.isFinite(minX)) return;
 
     const extW = Math.max(1, maxX - minX);
@@ -484,11 +510,19 @@
     const availW = W - pad*2;
     const availH = H - pad*2;
 
-    const s = Math.min(1, availW / extW, availH / extH);
+    // Scale needed to fit
+    let sFit = Math.min(1, availW / extW, availH / extH);
 
-    // Center within the viewBox with padding
+    // Enforce minimum readable font size (>= ~11pt)
+    const minScaleForText = MIN_READABLE_PX / Math.max(1, baseTextPx);
+    const s = Math.max(sFit, minScaleForText);
+
+    // If we had to increase scale above fit (because readability), we’ll still keep top aligned,
+    // and accept that in rare extreme cases it may not fit entirely (but text remains readable).
     const tx = pad + (availW - extW * s) / 2 - minX * s;
-    const ty = pad + (availH - extH * s) / 2 - minY * s;
+
+    // Keep top anchored to pad; when tree grows, bottom pushes -> it will look like root "moves up" naturally.
+    const ty = pad - minY * s;
 
     gContent.setAttribute("transform", `translate(${tx.toFixed(3)},${ty.toFixed(3)}) scale(${s.toFixed(4)})`);
   }
@@ -496,28 +530,31 @@
   // Focus after expand
   let focusNodeId = null;
 
-  // content group (so we can scale the whole drawing)
-  let gContent = null;
-
   // ---------- Draw tree ----------
   function drawTree(root){
     clearSVG();
-    gContent = el("g", { id: "content" });
-    svg.appendChild(gContent);
 
     const vb = svg.viewBox.baseVal;
     const W = vb.width || 360;
-    const pos = computeLayout(root, W);
 
+    // sizes
     const rNode = scaleVal(28);
     const rHalo = scaleVal(34);
     const edgeW = scaleVal(3);
-    const textSize = scaleVal(18);
+    const textSize = scaleVal(18);     // base text px before any auto-fit scale
+    const baseTextPx = textSize;
 
     const foW = scaleVal(48);
     const foH = scaleVal(36);
     const inpFont = scaleVal(14);
     const inpRadius = scaleVal(12);
+
+    // Layout with increased horizontal spacing + higher root
+    const pos = computeLayout(root, W, rHalo);
+
+    // group for scaling/auto-fit (PC), or plain (mobile)
+    const gContent = el("g", { id: "content" });
+    svg.appendChild(gContent);
 
     function drawEdges(node){
       if(!node || !node.expanded || isVisibleLeaf(node)) return;
@@ -525,8 +562,12 @@
       const l = pos.get(node.left.id);
       const r = pos.get(node.right.id);
 
+      // slightly shorter "branch" ends (less into the circles)
+      const endGap = scaleVal(6);
+
       const mk = (a,b) => el("line", {
-        x1:a.x, y1:a.y+rNode-2, x2:b.x, y2:b.y-rNode+2,
+        x1:a.x, y1:a.y + (rNode - endGap),
+        x2:b.x, y2:b.y - (rNode - endGap),
         stroke:"rgba(42,58,99,0.95)",
         "stroke-width": edgeW,
         "stroke-linecap":"round"
@@ -656,20 +697,20 @@
     if(isDone(root)){
       if(pcMode){
         const html = buildPcOverlayHtml(root, target);
-        const fontPx = Math.round(Math.max(18, scaleVal(18))); // big, fills header nicely
-        showPcOverlay(html, fontPx);
+        const overlayFontPx = Math.max(18, scaleVal(18));
+        showPcOverlay(html, Math.round(overlayFontPx));
       } else {
         hidePcOverlay();
-        drawFactorizationBoxMobile(root, target, pos);
+        drawFactorizationBoxMobile(root, target, pos, gContent);
       }
     } else {
       hidePcOverlay();
     }
 
-    // Auto-fit in PC mode: scale down the whole drawing if it doesn't fit vertically (or horizontally)
-    applyAutoFitIfNeeded(root, pos, rHalo);
+    // Auto-fit in PC mode, but never shrink below ~11pt readability
+    applyAutoFitIfNeeded(root, pos, rHalo, gContent, baseTextPx);
 
-    // Restore focus after redraw (works even with group transform)
+    // Restore focus after redraw
     if(focusNodeId !== null){
       const inp = svg.querySelector(`input[data-node-id="${focusNodeId}"]`);
       if(inp){
@@ -723,12 +764,11 @@
   pcToggle.addEventListener("change", () => {
     pcMode = pcToggle.checked;
     localStorage.setItem(SCALE_KEY, pcMode ? "1" : "0");
+    setBodyClass();
     drawTree(root);
   });
 
-  // If the window resizes (projector, rotation), recompute fit.
   window.addEventListener("resize", () => {
-    // redraw recomputes layout and auto-fit in PC mode
     drawTree(root);
   });
 
