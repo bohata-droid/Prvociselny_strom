@@ -22,6 +22,7 @@
       background: radial-gradient(900px 520px at 30% 0%, #122047 0%, var(--bg) 60%);
       color:var(--ink);
     }
+
     header{
       padding:12px 12px 10px;
       border-bottom:1px solid rgba(255,255,255,0.08);
@@ -31,12 +32,19 @@
       top: 0;
       z-index: 10;
     }
+    .headerInner{ position: relative; }
+
     h1{ margin:0 0 6px 0; font-size:15px; font-weight:900; letter-spacing:0.2px; }
     .sub{ margin:0; font-size:12.5px; color:var(--muted); line-height:1.35; }
+
     .bar{
       margin-top:10px;
-      display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap;
+      display:grid;
+      grid-template-columns: auto 1fr auto;
+      gap:8px;
+      align-items:center;
     }
+
     .pill{
       font-size:12px; color:var(--muted);
       border:1px solid rgba(255,255,255,0.10);
@@ -44,6 +52,7 @@
       background: rgba(16,26,47,0.35);
       white-space:nowrap;
     }
+
     button{
       background: linear-gradient(180deg, #1a2b55 0%, #132244 100%);
       color:var(--ink);
@@ -58,6 +67,87 @@
     button:active{ transform: translateY(1px); }
     .ghost{ background: transparent; border-color: rgba(255,255,255,0.14); }
 
+    .toggle{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:7px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,0.10);
+      background: rgba(16,26,47,0.35);
+      color:var(--muted);
+      font-size:12px;
+      font-weight:800;
+      user-select:none;
+      white-space:nowrap;
+    }
+    .toggle input{
+      width:42px;
+      height:24px;
+      appearance:none;
+      background: rgba(255,255,255,0.10);
+      border:1px solid rgba(255,255,255,0.14);
+      border-radius:999px;
+      position:relative;
+      outline:none;
+      cursor:pointer;
+    }
+    .toggle input::after{
+      content:"";
+      position:absolute;
+      top:2px; left:2px;
+      width:18px; height:18px;
+      border-radius:50%;
+      background: rgba(233,238,252,0.9);
+      transition: transform .18s ease;
+    }
+    .toggle input:checked{
+      background: rgba(121,166,255,0.25);
+      border-color: rgba(121,166,255,0.45);
+    }
+    .toggle input:checked::after{ transform: translateX(18px); }
+
+    .controls{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+
+    /* PC overlay result: centered in whole header, full height */
+    #pcResultOverlay{
+      position:absolute;
+      inset: 0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      pointer-events:none;
+      z-index: 1;
+    }
+    #pcResultOverlay .box{
+      height: 100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      width: min(900px, calc(100% - 16px));
+      margin: 0 auto;
+      padding: 0 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(11,18,32,0.45);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.25);
+      text-align:center;
+      font-weight: 950;
+      letter-spacing: 0.2px;
+      line-height: 1.05;
+      color: var(--ink);
+    }
+    #pcResultOverlay .prime{ color: var(--good); }
+    #pcResultOverlay .sep{ color: var(--muted); font-weight: 900; }
+
+    .headerLayer{ position: relative; z-index: 2; }
+
     main{ padding:10px 10px 26px; }
     .stage{
       background: rgba(16,26,47,0.55);
@@ -71,14 +161,28 @@
 </head>
 <body>
   <header>
-    <h1>Strom rozkladu na prvočísla</h1>
-    <p class="sub">Klikněte na složené číslo → vyplňte oba činitele → potvrďte (Enter nebo kliknutí mimo).</p>
-    <div class="bar">
-      <span class="pill" id="targetPill">Číslo: —</span>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <button id="customBtn" class="ghost">Vlastní číslo</button>
-        <button id="newBtn">Nové číslo</button>
-        <button id="resetBtn" class="ghost">Reset</button>
+    <div class="headerInner">
+      <div id="pcResultOverlay" aria-live="polite">
+        <div class="box" id="pcResultText"></div>
+      </div>
+
+      <div class="headerLayer">
+        <h1>Strom rozkladu na prvočísla</h1>
+        <p class="sub">Klikni na složené číslo → vyplň činitele → potvrď Enterem (nebo klepni mimo).</p>
+
+        <div class="bar">
+          <span class="pill" id="targetPill">Číslo: —</span>
+          <div></div>
+          <div class="controls">
+            <label class="toggle" title="Zvětší vykreslení pro PC / projektor">
+              PC
+              <input id="pcToggle" type="checkbox" />
+            </label>
+            <button id="customBtn" class="ghost">Vlastní číslo</button>
+            <button id="newBtn">Nové číslo</button>
+            <button id="resetBtn" class="ghost">Reset</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -110,6 +214,27 @@
       const n = 4 + Math.floor(Math.random() * (199 - 4 + 1));
       if(isComposite(n)) return n;
     }
+  }
+
+  // ---------- PC mode / scaling ----------
+  const PC_SCALE = 2.0;
+  const SCALE_KEY = "factorTreePcMode";
+  const pcToggle = document.getElementById("pcToggle");
+  let pcMode = localStorage.getItem(SCALE_KEY) === "1";
+  pcToggle.checked = pcMode;
+  function scaleVal(v){ return pcMode ? v * PC_SCALE : v; }
+
+  // ---------- Header PC overlay elements ----------
+  const pcResultOverlay = document.getElementById("pcResultOverlay");
+  const pcResultText = document.getElementById("pcResultText");
+  function showPcOverlay(html, fontPx){
+    pcResultText.style.fontSize = fontPx + "px";
+    pcResultText.innerHTML = html;
+    pcResultOverlay.style.display = "flex";
+  }
+  function hidePcOverlay(){
+    pcResultOverlay.style.display = "none";
+    pcResultText.textContent = "";
   }
 
   // ---------- Model ----------
@@ -151,23 +276,24 @@
     const leafIndex = new Map();
     leafList.forEach((n, i) => leafIndex.set(n.id, i));
 
-    const usable = W - 40;
+    const margin = scaleVal(20);
+    const usable = W - margin*2;
     const xGap = leafList.length <= 1 ? 0 : usable / (leafList.length - 1);
-    const yGap = 120;
+    const yGap = scaleVal(120);
 
     const pos = new Map();
     function assign(node, d){
       if(isVisibleLeaf(node)){
         const i = leafIndex.get(node.id) ?? 0;
-        const x = 20 + i * xGap;
-        const y = 60 + d * yGap;
+        const x = margin + i * xGap;
+        const y = scaleVal(60) + d * yGap;
         pos.set(node.id, { x, y, d });
         return pos.get(node.id);
       } else {
         const L = assign(node.left, d+1);
         const R = assign(node.right, d+1);
         const x = (L.x + R.x) / 2;
-        const y = 60 + d * yGap;
+        const y = scaleVal(60) + d * yGap;
         pos.set(node.id, { x, y, d });
         return pos.get(node.id);
       }
@@ -176,9 +302,8 @@
     return pos;
   }
 
-  // ---------- Rendering ----------
+  // ---------- SVG helpers ----------
   const svg = document.getElementById('svg');
-
   function clearSVG(){ while(svg.firstChild) svg.removeChild(svg.firstChild); }
   function el(name, attrs={}, children=[]){
     const e = document.createElementNS("http://www.w3.org/2000/svg", name);
@@ -186,6 +311,7 @@
     for(const c of children) e.appendChild(c);
     return e;
   }
+
   function nodeStyle(node){
     if(node.value === null){
       return {
@@ -208,6 +334,7 @@
     };
   }
 
+  // ---------- Expansion / confirmation ----------
   function ensureChildren(node){
     if(node.value === null) return false;
     if(isPrime(node.value)) return false;
@@ -217,13 +344,11 @@
     node.pendingPair = true;
     return true;
   }
-
   function findParent(root, child){
     let parent = null;
     walkVisible(root, (n) => { if(n.left === child || n.right === child) parent = n; });
     return parent;
   }
-
   function commitTryConfirm(parent){
     if(!parent || !parent.pendingPair) return false;
 
@@ -250,57 +375,62 @@
       return true;
     }
   }
-
   function sanitizeDigits(s){
     return (s ?? "").replace(/[^\d]/g, "").slice(0, 3);
   }
 
-  // Focus after expand
-  let focusNodeId = null;
+  // ---------- Result builders ----------
+  function getPrimesSorted(root){
+    return visibleLeaves(root).map(n => n.value).sort((a,b)=>a-b);
+  }
+  function buildPcOverlayHtml(root, target){
+    const primes = getPrimesSorted(root);
+    const parts = [];
+    parts.push(`<span>${target} = </span>`);
+    primes.forEach((p, i) => {
+      parts.push(`<span class="prime">${p}</span>`);
+      if(i < primes.length - 1) parts.push(`<span class="sep"> · </span>`);
+    });
+    return parts.join("");
+  }
 
-  function drawFactorizationBox(root, target, pos){
-    // Determine where the tree ends (max y among visible nodes)
+  // Mobile: inside SVG under the tree
+  function drawFactorizationBoxMobile(root, target, pos){
     let maxY = 0;
     walkVisible(root, (n) => {
       const p = pos.get(n.id);
       if(p) maxY = Math.max(maxY, p.y);
     });
 
-    // Position the box a bit below maxY, but keep it inside the viewBox
     const vb = svg.viewBox.baseVal;
     const W = vb.width || 360;
     const H = vb.height || 720;
 
-    const boxW = Math.min(320, W - 20);
-    const boxH = 52;
-    const gap = 56; // space below last row
-    let y = maxY + gap;
-    y = Math.min(y, H - boxH - 12); // clamp up if too low
+    const boxW = Math.min(scaleVal(320), W - scaleVal(20));
+    const boxH = scaleVal(52);
+    const gap  = scaleVal(56);
 
+    let y = maxY + gap;
+    y = Math.min(y, H - boxH - scaleVal(12));
     const x = (W - boxW) / 2;
 
-    // primes list
-    const primes = visibleLeaves(root).map(n => n.value).sort((a,b)=>a-b);
+    const primes = getPrimesSorted(root);
 
-    // background rounded rect
-    svg.appendChild(el("rect", {
-      x, y, width: boxW, height: boxH, rx: 14, ry: 14,
+    gContent.appendChild(el("rect", {
+      x, y, width: boxW, height: boxH, rx: scaleVal(14), ry: scaleVal(14),
       fill: "rgba(11,18,32,0.55)",
       stroke: "rgba(255,255,255,0.12)",
       "stroke-width": 1
     }));
 
-    // build inline text: "N = p · p · p" (dot)
-    // We'll render as multiple <text> chunks with tspans so we can color primes.
     const text = el("text", {
-      x: W/2, y: y + 33,
+      x: W/2, y: y + boxH*0.66,
       "text-anchor":"middle",
-      "font-size":"16",
+      "font-size": String(scaleVal(16)),
       "font-weight":"950",
       fill:"rgba(233,238,252,0.95)"
     });
 
-    // Use tspans; keep it simple: target + " = " normal, primes green, separators muted
     const t0 = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
     t0.textContent = `${target} = `;
     text.appendChild(t0);
@@ -319,15 +449,75 @@
       }
     });
 
-    svg.appendChild(text);
+    gContent.appendChild(text);
   }
 
+  // ---------- PC auto-fit (scale down if needed) ----------
+  function applyAutoFitIfNeeded(root, pos, outerRadius){
+    // Only for PC mode. Mobile keeps 1:1.
+    if(!pcMode){
+      gContent.setAttribute("transform", "");
+      return;
+    }
+
+    const vb = svg.viewBox.baseVal;
+    const W = vb.width || 360;
+    const H = vb.height || 720;
+    const pad = 10;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    walkVisible(root, (n) => {
+      const p = pos.get(n.id);
+      if(!p) return;
+      minX = Math.min(minX, p.x - outerRadius);
+      maxX = Math.max(maxX, p.x + outerRadius);
+      minY = Math.min(minY, p.y - outerRadius);
+      maxY = Math.max(maxY, p.y + outerRadius);
+    });
+
+    if(!Number.isFinite(minX)) return;
+
+    const extW = Math.max(1, maxX - minX);
+    const extH = Math.max(1, maxY - minY);
+
+    const availW = W - pad*2;
+    const availH = H - pad*2;
+
+    const s = Math.min(1, availW / extW, availH / extH);
+
+    // Center within the viewBox with padding
+    const tx = pad + (availW - extW * s) / 2 - minX * s;
+    const ty = pad + (availH - extH * s) / 2 - minY * s;
+
+    gContent.setAttribute("transform", `translate(${tx.toFixed(3)},${ty.toFixed(3)}) scale(${s.toFixed(4)})`);
+  }
+
+  // Focus after expand
+  let focusNodeId = null;
+
+  // content group (so we can scale the whole drawing)
+  let gContent = null;
+
+  // ---------- Draw tree ----------
   function drawTree(root){
     clearSVG();
+    gContent = el("g", { id: "content" });
+    svg.appendChild(gContent);
 
     const vb = svg.viewBox.baseVal;
     const W = vb.width || 360;
     const pos = computeLayout(root, W);
+
+    const rNode = scaleVal(28);
+    const rHalo = scaleVal(34);
+    const edgeW = scaleVal(3);
+    const textSize = scaleVal(18);
+
+    const foW = scaleVal(48);
+    const foH = scaleVal(36);
+    const inpFont = scaleVal(14);
+    const inpRadius = scaleVal(12);
 
     function drawEdges(node){
       if(!node || !node.expanded || isVisibleLeaf(node)) return;
@@ -336,14 +526,14 @@
       const r = pos.get(node.right.id);
 
       const mk = (a,b) => el("line", {
-        x1:a.x, y1:a.y+26, x2:b.x, y2:b.y-26,
+        x1:a.x, y1:a.y+rNode-2, x2:b.x, y2:b.y-rNode+2,
         stroke:"rgba(42,58,99,0.95)",
-        "stroke-width": 3,
+        "stroke-width": edgeW,
         "stroke-linecap":"round"
       });
 
-      svg.appendChild(mk(p,l));
-      svg.appendChild(mk(p,r));
+      gContent.appendChild(mk(p,l));
+      gContent.appendChild(mk(p,r));
       drawEdges(node.left);
       drawEdges(node.right);
     }
@@ -357,17 +547,17 @@
       const g = el("g", {"data-id": node.id});
 
       const halo = el("circle", {
-        cx:p.x, cy:p.y, r:34,
+        cx:p.x, cy:p.y, r:rHalo,
         fill: clickableExpand ? "rgba(121,166,255,0.10)" : "transparent",
         stroke: clickableExpand ? "rgba(121,166,255,0.35)" : "transparent",
-        "stroke-width": clickableExpand ? 2 : 0
+        "stroke-width": clickableExpand ? scaleVal(2) : 0
       });
 
       const circle = el("circle", {
-        cx:p.x, cy:p.y, r:28,
+        cx:p.x, cy:p.y, r:rNode,
         fill: st.fill,
         stroke: st.stroke,
-        "stroke-width": 3
+        "stroke-width": scaleVal(3)
       });
 
       g.appendChild(halo);
@@ -375,16 +565,16 @@
 
       if(node.value !== null){
         const t = el("text", {
-          x:p.x, y:p.y+6,
+          x:p.x, y:p.y+(textSize*0.33),
           "text-anchor":"middle",
-          "font-size":"18",
+          "font-size": String(textSize),
           "font-weight":"950",
           fill: st.text
         });
         t.textContent = node.value;
         g.appendChild(t);
       } else {
-        const fo = el("foreignObject", { x: p.x-24, y: p.y-18, width: 48, height: 36 });
+        const fo = el("foreignObject", { x: p.x-foW/2, y: p.y-foH/2, width: foW, height: foH });
         const inp = document.createElement("input");
         inp.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
         inp.type = "text";
@@ -394,13 +584,13 @@
         inp.dataset.nodeId = String(node.id);
 
         inp.style.cssText = `
-          width:48px;height:36px;
-          border-radius:12px;
+          width:${foW}px;height:${foH}px;
+          border-radius:${inpRadius}px;
           border:1px solid ${node._bad ? "rgba(255,107,107,0.75)" : "rgba(255,255,255,0.14)"};
           background: rgba(16,26,47,0.55);
           color: var(--ink);
           font-weight:950;
-          font-size:14px;
+          font-size:${inpFont}px;
           text-align:center;
           outline:none;
         `;
@@ -449,7 +639,7 @@
         });
       }
 
-      svg.appendChild(g);
+      gContent.appendChild(g);
 
       if(node.expanded){
         drawNodes(node.left);
@@ -460,11 +650,26 @@
     drawEdges(root);
     drawNodes(root);
 
-    // Draw factorization box inside SVG when done
+    // Result placement:
+    // - PC: overlay in header
+    // - Mobile: under tree in SVG
     if(isDone(root)){
-      drawFactorizationBox(root, target, pos);
+      if(pcMode){
+        const html = buildPcOverlayHtml(root, target);
+        const fontPx = Math.round(Math.max(18, scaleVal(18))); // big, fills header nicely
+        showPcOverlay(html, fontPx);
+      } else {
+        hidePcOverlay();
+        drawFactorizationBoxMobile(root, target, pos);
+      }
+    } else {
+      hidePcOverlay();
     }
 
+    // Auto-fit in PC mode: scale down the whole drawing if it doesn't fit vertically (or horizontally)
+    applyAutoFitIfNeeded(root, pos, rHalo);
+
+    // Restore focus after redraw (works even with group transform)
     if(focusNodeId !== null){
       const inp = svg.querySelector(`input[data-node-id="${focusNodeId}"]`);
       if(inp){
@@ -489,11 +694,12 @@
     target = n;
     root = makeNodeValue(target);
     updateTargetUI();
+    hidePcOverlay();
     drawTree(root);
   }
 
   function newNumber(){ setNewTarget(randomCompositeUnder200()); }
-  function resetTree(){ root = makeNodeValue(target); drawTree(root); }
+  function resetTree(){ root = makeNodeValue(target); hidePcOverlay(); drawTree(root); }
 
   function askCustom(){
     const raw = prompt("Zadej složené číslo 4–199:", String(target));
@@ -513,6 +719,18 @@
   newBtn.addEventListener("click", newNumber);
   resetBtn.addEventListener("click", resetTree);
   customBtn.addEventListener("click", askCustom);
+
+  pcToggle.addEventListener("change", () => {
+    pcMode = pcToggle.checked;
+    localStorage.setItem(SCALE_KEY, pcMode ? "1" : "0");
+    drawTree(root);
+  });
+
+  // If the window resizes (projector, rotation), recompute fit.
+  window.addEventListener("resize", () => {
+    // redraw recomputes layout and auto-fit in PC mode
+    drawTree(root);
+  });
 
   // ---------- Init ----------
   updateTargetUI();
