@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Factor Tree – krokové rozklikávání</title>
+  <style>
+    :root{
+      --bg:#0b1220;
+      --ink:#e9eefc;
+      --muted:#a9b6da;
+      --accent:#79a6ff;
+      --good:#47d18c;
+      --warn:#ffcc66;
+      --bad:#ff6b6b;
+      --stroke:#2a3a63;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: radial-gradient(900px 520px at 30% 0%, #122047 0%, var(--bg) 60%);
+      color:var(--ink);
+    }
+    header{
+      padding:12px 12px 10px;
+      border-bottom:1px solid rgba(255,255,255,0.08);
+      background: rgba(16,26,47,0.65);
+      backdrop-filter: blur(6px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    h1{ margin:0 0 6px 0; font-size:15px; font-weight:900; letter-spacing:0.2px; }
+    .sub{ margin:0; font-size:12.5px; color:var(--muted); line-height:1.35; }
+    .bar{
+      margin-top:10px;
+      display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap;
+    }
+    .pill{
+      font-size:12px; color:var(--muted);
+      border:1px solid rgba(255,255,255,0.10);
+      padding:7px 10px; border-radius:999px;
+      background: rgba(16,26,47,0.35);
+      white-space:nowrap;
+    }
+    button{
+      background: linear-gradient(180deg, #1a2b55 0%, #132244 100%);
+      color:var(--ink);
+      border:1px solid rgba(255,255,255,0.12);
+      border-radius:12px;
+      padding:9px 10px;
+      cursor:pointer;
+      font-weight:800;
+      font-size:12.5px;
+      user-select:none;
+    }
+    button:active{ transform: translateY(1px); }
+    .ghost{ background: transparent; border-color: rgba(255,255,255,0.14); }
+
+    main{ padding:10px 10px 26px; }
+    .stage{
+      background: rgba(16,26,47,0.55);
+      border:1px solid rgba(255,255,255,0.10);
+      border-radius:18px;
+      padding:10px;
+      overflow:hidden;
+    }
+    svg{ width:100%; height: min(72vh, 860px); display:block; touch-action: manipulation; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Strom rozkladu na prvočísla</h1>
+    <p class="sub">Klikněte na složené číslo → vyplňte oba činitele → potvrďte (Enter nebo kliknutí mimo).</p>
+    <div class="bar">
+      <span class="pill" id="targetPill">Číslo: —</span>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button id="customBtn" class="ghost">Vlastní číslo</button>
+        <button id="newBtn">Nové číslo</button>
+        <button id="resetBtn" class="ghost">Reset</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="stage">
+      <svg id="svg" viewBox="0 0 360 720" xmlns="http://www.w3.org/2000/svg" aria-label="Factor tree"></svg>
+    </div>
+  </main>
+
+<script>
+(() => {
+  // ---------- Math ----------
+  function isPrime(n){
+    n = Math.trunc(n);
+    if(n <= 1) return false;
+    if(n <= 3) return true;
+    if(n % 2 === 0 || n % 3 === 0) return false;
+    for(let i=5; i*i<=n; i+=6){
+      if(n % i === 0 || n % (i+2) === 0) return false;
+    }
+    return true;
+  }
+  function isComposite(n){
+    return Number.isInteger(n) && n >= 4 && !isPrime(n);
+  }
+  function randomCompositeUnder200(){
+    while(true){
+      const n = 4 + Math.floor(Math.random() * (199 - 4 + 1));
+      if(isComposite(n)) return n;
+    }
+  }
+
+  // ---------- Model ----------
+  let idSeq = 1;
+  function makeNodeValue(n){
+    return { id:idSeq++, value:n, inputStr:null, left:null, right:null, expanded:false, pendingPair:false, _bad:false };
+  }
+  function makeNodeInput(){
+    return { id:idSeq++, value:null, inputStr:"", left:null, right:null, expanded:false, pendingPair:false, _bad:false };
+  }
+
+  function isVisibleLeaf(node){
+    return !node.expanded || (!node.left && !node.right);
+  }
+  function visibleLeaves(node, out=[]){
+    if(!node) return out;
+    if(isVisibleLeaf(node)) out.push(node);
+    else { visibleLeaves(node.left, out); visibleLeaves(node.right, out); }
+    return out;
+  }
+  function walkVisible(node, fn){
+    if(!node) return;
+    fn(node);
+    if(node.expanded){
+      walkVisible(node.left, fn);
+      walkVisible(node.right, fn);
+    }
+  }
+  function isDone(root){
+    const lf = visibleLeaves(root);
+    if(lf.some(n => n.value === null)) return false;
+    if(lf.some(n => n.value !== null && !isPrime(n.value))) return false;
+    return true;
+  }
+
+  // ---------- Layout ----------
+  function computeLayout(root, W){
+    const leafList = visibleLeaves(root);
+    const leafIndex = new Map();
+    leafList.forEach((n, i) => leafIndex.set(n.id, i));
+
+    const usable = W - 40;
+    const xGap = leafList.length <= 1 ? 0 : usable / (leafList.length - 1);
+    const yGap = 120;
+
+    const pos = new Map();
+    function assign(node, d){
+      if(isVisibleLeaf(node)){
+        const i = leafIndex.get(node.id) ?? 0;
+        const x = 20 + i * xGap;
+        const y = 60 + d * yGap;
+        pos.set(node.id, { x, y, d });
+        return pos.get(node.id);
+      } else {
+        const L = assign(node.left, d+1);
+        const R = assign(node.right, d+1);
+        const x = (L.x + R.x) / 2;
+        const y = 60 + d * yGap;
+        pos.set(node.id, { x, y, d });
+        return pos.get(node.id);
+      }
+    }
+    assign(root, 0);
+    return pos;
+  }
+
+  // ---------- Rendering ----------
+  const svg = document.getElementById('svg');
+
+  function clearSVG(){ while(svg.firstChild) svg.removeChild(svg.firstChild); }
+  function el(name, attrs={}, children=[]){
+    const e = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for(const [k,v] of Object.entries(attrs)) e.setAttribute(k, String(v));
+    for(const c of children) e.appendChild(c);
+    return e;
+  }
+  function nodeStyle(node){
+    if(node.value === null){
+      return {
+        fill: "rgba(121,166,255,0.08)",
+        stroke: node._bad ? "rgba(255,107,107,0.75)" : "rgba(121,166,255,0.38)",
+        text: "rgba(233,238,252,0.92)"
+      };
+    }
+    if(isPrime(node.value)){
+      return {
+        fill: "rgba(71,209,140,0.18)",
+        stroke: "rgba(71,209,140,0.78)",
+        text: "rgba(233,238,252,0.95)"
+      };
+    }
+    return {
+      fill: "rgba(255,204,102,0.12)",
+      stroke: "rgba(255,204,102,0.70)",
+      text: "rgba(233,238,252,0.95)"
+    };
+  }
+
+  function ensureChildren(node){
+    if(node.value === null) return false;
+    if(isPrime(node.value)) return false;
+    if(node.left && node.right) return true;
+    node.left = makeNodeInput();
+    node.right = makeNodeInput();
+    node.pendingPair = true;
+    return true;
+  }
+
+  function findParent(root, child){
+    let parent = null;
+    walkVisible(root, (n) => { if(n.left === child || n.right === child) parent = n; });
+    return parent;
+  }
+
+  function commitTryConfirm(parent){
+    if(!parent || !parent.pendingPair) return false;
+
+    const aStr = parent.left?.inputStr ?? "";
+    const bStr = parent.right?.inputStr ?? "";
+    if(aStr === "" || bStr === "") return false;
+
+    const a = Number(aStr);
+    const b = Number(bStr);
+
+    const ok =
+      Number.isInteger(a) && Number.isInteger(b) &&
+      a > 1 && b > 1 &&
+      a * b === parent.value;
+
+    if(ok){
+      parent.left.value = a; parent.left.inputStr = null; parent.left._bad = false;
+      parent.right.value = b; parent.right.inputStr = null; parent.right._bad = false;
+      parent.pendingPair = false;
+      return true;
+    } else {
+      parent.left._bad = true;
+      parent.right._bad = true;
+      return true;
+    }
+  }
+
+  function sanitizeDigits(s){
+    return (s ?? "").replace(/[^\d]/g, "").slice(0, 3);
+  }
+
+  // Focus after expand
+  let focusNodeId = null;
+
+  function drawFactorizationBox(root, target, pos){
+    // Determine where the tree ends (max y among visible nodes)
+    let maxY = 0;
+    walkVisible(root, (n) => {
+      const p = pos.get(n.id);
+      if(p) maxY = Math.max(maxY, p.y);
+    });
+
+    // Position the box a bit below maxY, but keep it inside the viewBox
+    const vb = svg.viewBox.baseVal;
+    const W = vb.width || 360;
+    const H = vb.height || 720;
+
+    const boxW = Math.min(320, W - 20);
+    const boxH = 52;
+    const gap = 56; // space below last row
+    let y = maxY + gap;
+    y = Math.min(y, H - boxH - 12); // clamp up if too low
+
+    const x = (W - boxW) / 2;
+
+    // primes list
+    const primes = visibleLeaves(root).map(n => n.value).sort((a,b)=>a-b);
+
+    // background rounded rect
+    svg.appendChild(el("rect", {
+      x, y, width: boxW, height: boxH, rx: 14, ry: 14,
+      fill: "rgba(11,18,32,0.55)",
+      stroke: "rgba(255,255,255,0.12)",
+      "stroke-width": 1
+    }));
+
+    // build inline text: "N = p · p · p" (dot)
+    // We'll render as multiple <text> chunks with tspans so we can color primes.
+    const text = el("text", {
+      x: W/2, y: y + 33,
+      "text-anchor":"middle",
+      "font-size":"16",
+      "font-weight":"950",
+      fill:"rgba(233,238,252,0.95)"
+    });
+
+    // Use tspans; keep it simple: target + " = " normal, primes green, separators muted
+    const t0 = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+    t0.textContent = `${target} = `;
+    text.appendChild(t0);
+
+    primes.forEach((p, i) => {
+      const tp = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+      tp.textContent = String(p);
+      tp.setAttribute("fill", "rgba(71,209,140,0.95)");
+      text.appendChild(tp);
+
+      if(i < primes.length - 1){
+        const sep = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+        sep.textContent = " · ";
+        sep.setAttribute("fill", "rgba(169,182,218,0.95)");
+        text.appendChild(sep);
+      }
+    });
+
+    svg.appendChild(text);
+  }
+
+  function drawTree(root){
+    clearSVG();
+
+    const vb = svg.viewBox.baseVal;
+    const W = vb.width || 360;
+    const pos = computeLayout(root, W);
+
+    function drawEdges(node){
+      if(!node || !node.expanded || isVisibleLeaf(node)) return;
+      const p = pos.get(node.id);
+      const l = pos.get(node.left.id);
+      const r = pos.get(node.right.id);
+
+      const mk = (a,b) => el("line", {
+        x1:a.x, y1:a.y+26, x2:b.x, y2:b.y-26,
+        stroke:"rgba(42,58,99,0.95)",
+        "stroke-width": 3,
+        "stroke-linecap":"round"
+      });
+
+      svg.appendChild(mk(p,l));
+      svg.appendChild(mk(p,r));
+      drawEdges(node.left);
+      drawEdges(node.right);
+    }
+
+    function drawNodes(node){
+      if(!node) return;
+      const p = pos.get(node.id);
+      const st = nodeStyle(node);
+      const clickableExpand = (node.value !== null && !isPrime(node.value) && !node.expanded);
+
+      const g = el("g", {"data-id": node.id});
+
+      const halo = el("circle", {
+        cx:p.x, cy:p.y, r:34,
+        fill: clickableExpand ? "rgba(121,166,255,0.10)" : "transparent",
+        stroke: clickableExpand ? "rgba(121,166,255,0.35)" : "transparent",
+        "stroke-width": clickableExpand ? 2 : 0
+      });
+
+      const circle = el("circle", {
+        cx:p.x, cy:p.y, r:28,
+        fill: st.fill,
+        stroke: st.stroke,
+        "stroke-width": 3
+      });
+
+      g.appendChild(halo);
+      g.appendChild(circle);
+
+      if(node.value !== null){
+        const t = el("text", {
+          x:p.x, y:p.y+6,
+          "text-anchor":"middle",
+          "font-size":"18",
+          "font-weight":"950",
+          fill: st.text
+        });
+        t.textContent = node.value;
+        g.appendChild(t);
+      } else {
+        const fo = el("foreignObject", { x: p.x-24, y: p.y-18, width: 48, height: 36 });
+        const inp = document.createElement("input");
+        inp.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        inp.type = "text";
+        inp.inputMode = "numeric";
+        inp.autocomplete = "off";
+        inp.value = node.inputStr ?? "";
+        inp.dataset.nodeId = String(node.id);
+
+        inp.style.cssText = `
+          width:48px;height:36px;
+          border-radius:12px;
+          border:1px solid ${node._bad ? "rgba(255,107,107,0.75)" : "rgba(255,255,255,0.14)"};
+          background: rgba(16,26,47,0.55);
+          color: var(--ink);
+          font-weight:950;
+          font-size:14px;
+          text-align:center;
+          outline:none;
+        `;
+
+        inp.addEventListener("input", () => {
+          node._bad = false;
+          const cleaned = sanitizeDigits(inp.value);
+          if(inp.value !== cleaned) inp.value = cleaned;
+          node.inputStr = cleaned;
+
+          const parent = findParent(root, node);
+          if(parent){
+            parent.left && (parent.left._bad = false);
+            parent.right && (parent.right._bad = false);
+          }
+        });
+
+        const commit = () => {
+          const parent = findParent(root, node);
+          if(parent){
+            const shouldRedraw = commitTryConfirm(parent);
+            if(shouldRedraw) drawTree(root);
+          }
+        };
+
+        inp.addEventListener("keydown", (e) => {
+          if(e.key === "Enter"){
+            e.preventDefault();
+            commit();
+          }
+        });
+        inp.addEventListener("blur", () => { commit(); });
+
+        fo.appendChild(inp);
+        g.appendChild(fo);
+      }
+
+      if(clickableExpand){
+        g.style.cursor = "pointer";
+        g.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          ensureChildren(node);
+          node.expanded = true;
+          focusNodeId = node.left?.id ?? null;
+          drawTree(root);
+        });
+      }
+
+      svg.appendChild(g);
+
+      if(node.expanded){
+        drawNodes(node.left);
+        drawNodes(node.right);
+      }
+    }
+
+    drawEdges(root);
+    drawNodes(root);
+
+    // Draw factorization box inside SVG when done
+    if(isDone(root)){
+      drawFactorizationBox(root, target, pos);
+    }
+
+    if(focusNodeId !== null){
+      const inp = svg.querySelector(`input[data-node-id="${focusNodeId}"]`);
+      if(inp){
+        requestAnimationFrame(() => { try { inp.focus(); } catch(_){} });
+      }
+      focusNodeId = null;
+    }
+  }
+
+  // ---------- App state ----------
+  const targetPill = document.getElementById('targetPill');
+  const newBtn = document.getElementById('newBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const customBtn = document.getElementById('customBtn');
+
+  let target = randomCompositeUnder200();
+  let root = makeNodeValue(target);
+
+  function updateTargetUI(){ targetPill.textContent = `Číslo: ${target}`; }
+
+  function setNewTarget(n){
+    target = n;
+    root = makeNodeValue(target);
+    updateTargetUI();
+    drawTree(root);
+  }
+
+  function newNumber(){ setNewTarget(randomCompositeUnder200()); }
+  function resetTree(){ root = makeNodeValue(target); drawTree(root); }
+
+  function askCustom(){
+    const raw = prompt("Zadej složené číslo 4–199:", String(target));
+    if(raw === null) return;
+    const n = Number(String(raw).trim());
+    if(!Number.isInteger(n) || n < 4 || n > 199){
+      alert("Zadej celé číslo v rozsahu 4–199.");
+      return;
+    }
+    if(isPrime(n)){
+      alert("Tohle je prvočíslo. Zadej složené číslo.");
+      return;
+    }
+    setNewTarget(n);
+  }
+
+  newBtn.addEventListener("click", newNumber);
+  resetBtn.addEventListener("click", resetTree);
+  customBtn.addEventListener("click", askCustom);
+
+  // ---------- Init ----------
+  updateTargetUI();
+  drawTree(root);
+})();
+</script>
+</body>
+</html>
